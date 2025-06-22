@@ -1,6 +1,6 @@
-# .github/workflows/auto-merge-txt.yml
+# .github/workflows/auto-merge-pr.yml
 
-name: Auto Merge Request Files
+name: Auto Merge PRs With Valid TXT Files
 
 on:
   pull_request:
@@ -8,9 +8,11 @@ on:
       - opened
       - synchronize
       - reopened
+    branches:
+      - main
 
 jobs:
-  auto-merge:
+  check-and-merge:
     if: github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     permissions:
@@ -18,42 +20,42 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout PR branch
+      - name: Checkout pull request code
         uses: actions/checkout@v3
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 2
 
-      - name: Fetch base branch
+      - name: Set up Git
         run: |
-          git fetch origin ${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
 
-      - name: Check changed files only in requests folder
-        id: check
+      - name: Check if only new TXT files in 'requests/' were added
+        id: filecheck
         run: |
-          changed_files=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }} HEAD)
-          echo "$changed_files"
+          base_sha=${{ github.event.pull_request.base.sha }}
+          head_sha=${{ github.event.pull_request.head.sha }}
+          echo "Comparing $base_sha to $head_sha"
 
-          only_requests=true
-          for file in $changed_files; do
-            if [[ "$file" != requests/*.txt ]]; then
-              only_requests=false
+          changed_files=$(git diff --name-status $base_sha $head_sha)
+          echo "$changed_files" > changed_files.txt
+
+          valid=true
+          while IFS=$'\t' read -r status file; do
+            if [[ "$status" != A* || ! "$file" =~ ^requests/.*\.txt$ ]]; then
+              valid=false
               break
             fi
-          done
+          done < changed_files.txt
 
-          echo "only_requests=$only_requests" >> $GITHUB_OUTPUT
+          echo "valid=$valid" >> $GITHUB_OUTPUT
 
-      - name: Enable auto-merge
-        if: steps.check.outputs.only_requests == 'true'
-        run: |
-          gh pr merge ${{ github.event.pull_request.number }} --merge --admin
+      - name: Debug PR number
+        run: echo "PR number: ${{ github.event.pull_request.number }}"
+
+      - name: Auto-merge PR if valid
+        if: steps.filecheck.outputs.valid == 'true'
+        run: gh pr merge ${{ github.event.pull_request.number }} --merge --admin
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Skip auto-merge (invalid changes)
-        if: steps.check.outputs.only_requests != 'true'
-        run: |
-          echo "PR contains files outside the 'requests' folder. Auto-merge skipped."
+          GH_TOKEN: ${{ secrets.GH_PAT }}
