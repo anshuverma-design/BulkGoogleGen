@@ -1,6 +1,6 @@
 primaryEmail: tempgit6969@a1.eaudemathematica.blog
 givenName: Temp6969
-familyName: 
+familyName: temp
 recoveryEmail:
 recoveryPhone:
 orgUnitPath: /
