@@ -1,11 +1,16 @@
-name: Auto Merge New Requests
+# .github/workflows/auto-merge-txt.yml
+
+name: Auto Merge Request Files
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 jobs:
-  auto-merge-request:
+  auto-merge:
     if: github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     permissions:
@@ -13,42 +18,42 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout forked PR branch
+      - name: Checkout PR branch
         uses: actions/checkout@v3
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 2
 
-      - name: Validate file location
-        id: validate
+      - name: Fetch base branch
         run: |
-          changed_files=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }})
-          echo "Changed files: $changed_files"
+          git fetch origin ${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
 
-          count=$(echo "$changed_files" | wc -l)
-          only_requests=$(echo "$changed_files" | grep -Ec '^requests/[^/]+\.txt$')
+      - name: Check changed files only in requests folder
+        id: check
+        run: |
+          changed_files=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }} HEAD)
+          echo "$changed_files"
 
-          if [[ "$count" -eq "$only_requests" ]]; then
-            echo "All changes are valid .txt files in requests folder."
-            echo "valid=true" >> $GITHUB_OUTPUT
-          else
-            echo "Invalid changes detected."
-            echo "valid=false" >> $GITHUB_OUTPUT
-          fi
+          only_requests=true
+          for file in $changed_files; do
+            if [[ "$file" != requests/*.txt ]]; then
+              only_requests=false
+              break
+            fi
+          done
 
-      - name: Checkout upstream repo
-        if: steps.validate.outputs.valid == 'true'
-        uses: actions/checkout@v3
-        with:
-          repository: anshuverma-design/BulkGoogleGen
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
+          echo "only_requests=$only_requests" >> $GITHUB_OUTPUT
 
-      - name: Merge PR automatically
-        if: steps.validate.outputs.valid == 'true'
-        uses: peter-evans/enable-pull-request-automerge@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          pull-request-number: ${{ github.event.pull_request.number }}
-          merge-method: squash
+      - name: Enable auto-merge
+        if: steps.check.outputs.only_requests == 'true'
+        run: |
+          gh pr merge ${{ github.event.pull_request.number }} --merge --admin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip auto-merge (invalid changes)
+        if: steps.check.outputs.only_requests != 'true'
+        run: |
+          echo "PR contains files outside the 'requests' folder. Auto-merge skipped."
